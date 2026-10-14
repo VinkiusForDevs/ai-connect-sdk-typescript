@@ -6,11 +6,17 @@
  * so the wire shape never leaks into the SDK surface.
  */
 import { CatalogClient } from '../resources/catalog';
-import { CredentialsClient } from '../resources/credentials';
+import { CredentialsClient, type SetCredentialsInput } from '../resources/credentials';
 import type { CredentialSchema, CredentialStatus, RequestOptions } from '../types';
 import type { Connector } from './connector';
 import type { SdkContext } from './context';
 import type { UserContext } from './user';
+
+/** Options for {@link CredentialsHandle.set}; `merge` is forwarded in the body. */
+export interface SetCredentialsOptions extends RequestOptions {
+  /** Merge into the stored credentials instead of replacing them. */
+  merge?: boolean;
+}
 
 export class CredentialsHandle {
   constructor(
@@ -37,10 +43,16 @@ export class CredentialsHandle {
     return this.client(connectionId).status(opts);
   }
 
-  /** Store credentials (validated server-side against the schema). */
-  async set(values: Record<string, string>, opts: RequestOptions = {}): Promise<CredentialStatus> {
+  /** Store credentials, validated server-side. Pass `{ merge: true }` to update only the keys you send. */
+  async set(
+    values: Record<string, string>,
+    opts: SetCredentialsOptions = {},
+  ): Promise<CredentialStatus> {
     const connectionId = await this.connector.resolveConnectionId(opts);
-    return this.client(connectionId).set({ credentials: values }, opts);
+    const { merge, ...request } = opts;
+    const input: SetCredentialsInput = { credentials: values };
+    if (merge !== undefined) input.merge = merge;
+    return this.client(connectionId).set(input, request);
   }
 
   private client(connectionId: string): CredentialsClient {

@@ -12,7 +12,7 @@
  * {@link Transport} and are shared with the data-plane RuntimeClient.
  */
 import type { Hooks } from '../types';
-import { mapHttpError } from './errors';
+import { ConfigError, mapHttpError } from './errors';
 import type { FetchLike } from './transport';
 import { Transport } from './transport';
 import type { RetryPolicy } from './retry';
@@ -40,12 +40,20 @@ export interface HttpRequest {
   query?: Record<string, string | number | boolean | undefined | null> | undefined;
   body?: unknown;
   signal?: AbortSignal | undefined;
-  /** Force retry-safety. Defaults to true for GET/PUT/DELETE, false otherwise. */
+  /**
+   * Force retry-safety. When set, it wins outright. When left `undefined`, a
+   * request is retryable if its method is naturally idempotent (GET/PUT/DELETE)
+   * OR it carries a non-empty idempotency key.
+   */
   idempotent?: boolean | undefined;
   /**
-   * Idempotency key forwarded as the `Idempotency-Key` header. Declaring it is
-   * itself a retry-safety declaration: the server deduplicates replays, so a
-   * request carrying one is retried even when its method is not idempotent.
+   * Idempotency key forwarded as the `Idempotency-Key` header for correlation.
+   *
+   * A non-empty key opts the request into retry safety unless the caller set
+   * `idempotent` explicitly. Genuinely non-idempotent requests (e.g.
+   * `tokens.issue`) are hard-flagged `idempotent: false` and are never
+   * auto-retried regardless of any key. Empty or whitespace-only keys are
+   * rejected with a ConfigError.
    */
   idempotencyKey?: string | undefined;
   headers?: Record<string, string> | undefined;
@@ -85,9 +93,14 @@ export class HttpClient {
   }
 
   async request<T>(req: HttpRequest): Promise<T> {
+    this.assertIdempotencyKey(req.idempotencyKey);
     const url = this.buildUrl(req.path, req.query);
     const headers = this.buildHeaders(req);
-    const retryable = (req.idempotent ?? isIdempotentMethod(req.method)) || req.idempotencyKey !== undefined;
+    // Honor the explicit idempotency flag first: a request a caller marked
+    // `idempotent: false` (e.g. tokens.issue, which mints a distinct token per
+    // POST) stays non-retryable even when a key is supplied. Only when the flag
+    // is unset does a non-empty key opt the request into retry safety.
+    const retryable = req.idempotent ?? (isIdempotentMethod(req.method) || req.idempotencyKey !== undefined);
 
     const result = await this.transport.send({
       url,
@@ -102,6 +115,12 @@ export class HttpClient {
 
     if (result.status >= 200 && result.status < 300) return result.body as T;
     throw mapHttpError(result.status, result.body, result.requestId, result.retryAfterMs);
+  }
+
+  private assertIdempotencyKey(key: string | undefined): void {
+    if (key !== undefined && key.trim() === '') {
+      throw new ConfigError('Idempotency-Key must be a non-empty, non-whitespace string.');
+    }
   }
 
   private buildUrl(path: string, query?: HttpRequest['query']): string {

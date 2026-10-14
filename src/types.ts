@@ -21,9 +21,14 @@ export interface RequestOptions {
   /** Abort the request (composed with the client's timeout). */
   signal?: AbortSignal;
   /**
-   * Idempotency key forwarded as the `Idempotency-Key` header. Declaring it
-   * makes the request retry-safe: transport-level retries are enabled even for
-   * non-idempotent methods, and the server deduplicates replays.
+   * Idempotency key forwarded as the `Idempotency-Key` header, for request
+   * correlation. When the request is otherwise retryable (GET/PUT/DELETE, or a
+   * create the caller flagged `idempotent: true`), a non-empty key keeps it
+   * safe to retry. The control plane does not run a replay-deduplication store:
+   * retry safety comes from natural idempotency, so a key on a genuinely
+   * non-idempotent POST does not prevent re-execution — such requests must stay
+   * `idempotent: false` (as `tokens.issue` is). Empty/whitespace-only keys are
+   * rejected (ConfigError).
    */
   idempotencyKey?: string;
   /**
@@ -70,8 +75,6 @@ export interface VinkiusOptions {
   appId: string;
   /** Secret application key — the `vk_app_sk_*` credential (Bearer auth). */
   apiKey: string;
-  /** API base URL. Defaults to the Vinkius Cloud production host. */
-  baseUrl?: string;
   /** Per-request timeout in milliseconds. Default: 30000. */
   timeoutMs?: number;
   /** Max automatic retries for idempotent requests. Default: 2. */
@@ -162,6 +165,13 @@ export interface CatalogConnectorDetail extends CatalogConnector {
   credential_schema: CredentialSchema;
 }
 
+/** A page of marketplace search results. */
+export interface CatalogSearchResult {
+  items: CatalogConnector[];
+  hasMore: boolean;
+  page: number;
+}
+
 /** Credential field types as described by a connector's `credential_schema`. */
 export type CredentialType =
   | 'api_key'
@@ -206,7 +216,7 @@ export interface ConnectorSummary {
   connectionId?: string;
 }
 
-/** Result of a capability execution. `isError` is a result, not a throw. */
+/** Capability execution result. Ordinary failures set `isError`; gate blocks are thrown. */
 export interface CapabilityResult {
   content: Array<{ type: string; text: string }>;
   isError: boolean;

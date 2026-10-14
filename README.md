@@ -231,9 +231,13 @@ const result = await capabilities
 ```
 
 Your agent calls the capability. Vinkius resolves authentication, permissions,
-protocol and execution, then returns a structured result. A capability-level failure
-comes back as `isError: true` — a result, not a thrown exception — so your agent
-loop can feed the error back to the model and let it recover.
+protocol and execution, then returns a structured result. An ordinary tool-level
+failure comes back as `isError: true` — a result, not a thrown exception — so your
+agent loop can feed the error back to the model and let it recover. Vinkius-gate
+blocks, by contrast, are *thrown* as typed errors: a plan-quota block →
+`QuotaError`, an overage-blocked payment → `OverageError`, and a tripped circuit
+breaker → `RateLimitError` — so a caller can detect them (and surface the upgrade
+URL, where present) instead of parsing the natural-language wall text.
 
 ## Framework adapters
 
@@ -396,7 +400,6 @@ the HTTP envelope `{ credentials: values }`.
 new Vinkius({
   appId: 'vk_app_…',
   apiKey: 'vk_app_sk_…',
-  baseUrl: 'https://api.vinkius.com', // default
   timeoutMs: 30_000, // default
   maxRetries: 2, // default (idempotent requests only)
   fetch: globalThis.fetch, // override for tests/edge
@@ -417,8 +420,11 @@ All failures are subclasses of `VinkiusError` with `status`, `code`, and `reques
 `OverageError` · `ConnectorNotConnectedError` · `ConnectionError` · `ConfigError` ·
 `NotImplementedError`.
 
-Capability execution returns `{ content, isError }` — an `isError: true` result is
-returned, not thrown. Quota/overage limits surface as `QuotaError`/`OverageError`.
+Capability execution returns `{ content, isError }` — an ordinary `isError: true`
+result is returned, not thrown. Vinkius-gate blocks are thrown instead: a plan-quota
+block → `QuotaError` (carries `upgradeUrl`), an overage-blocked payment →
+`OverageError` (carries `upgradeUrl`), and a tripped circuit breaker →
+`RateLimitError`.
 
 ## Security
 

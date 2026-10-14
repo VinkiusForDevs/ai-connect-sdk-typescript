@@ -1,16 +1,16 @@
 {
   "name": "@vinkius/connect",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Ship AI features, not integration projects. Give every user of your AI app their own connectors and AI capabilities.",
   "license": "Apache-2.0",
   "author": "Vinkius",
-  "homepage": "https://github.com/vinkius-labs/ai-connect-sdk#readme",
+  "homepage": "https://github.com/VinkiusForDevs/ai-connect-sdk-typescript#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vinkius-labs/ai-connect-sdk.git"
+    "url": "git+https://github.com/VinkiusForDevs/ai-connect-sdk-typescript.git"
   },
   "bugs": {
-    "url": "https://github.com/vinkius-labs/ai-connect-sdk/issues"
+    "url": "https://github.com/VinkiusForDevs/ai-connect-sdk-typescript/issues"
   },
   "keywords": [
     "vinkius",

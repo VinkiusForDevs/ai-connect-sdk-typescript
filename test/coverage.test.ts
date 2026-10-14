@@ -43,10 +43,17 @@ describe('config validation (gaps)', () => {
     vi.restoreAllMocks();
   });
 
-  it('rejects an invalid baseUrl', () => {
-    expect(() => new Vinkius({ appId: 'vk_app_x', apiKey: 'vk_app_sk_x', baseUrl: 'not a url' })).toThrow(
-      ConfigError,
-    );
+  it('rejects an invalid VINKIUS_API_BASE override', () => {
+    const prev = process.env.VINKIUS_API_BASE;
+    process.env.VINKIUS_API_BASE = 'not a url';
+    try {
+      expect(() =>
+        new Vinkius({ appId: 'vk_app_x', apiKey: 'vk_app_sk_x', fetch: (() => {}) as never }),
+      ).toThrow(ConfigError);
+    } finally {
+      if (prev === undefined) delete process.env.VINKIUS_API_BASE;
+      else process.env.VINKIUS_API_BASE = prev;
+    }
   });
 
   it('rejects construction when no global fetch exists', () => {
@@ -67,9 +74,16 @@ describe('config validation (gaps)', () => {
       path: /^\/apps\/vk_app_test\/users\/someuser$/,
       respond: () => ({ body: { data: appUser('u1', 'someuser') } }),
     };
-    const { vinkius } = makeVinkius([route], { baseUrl: 'http://api.example.com' });
-    await vinkius.users.get('someuser');
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('insecure'));
+    const prev = process.env.VINKIUS_API_BASE;
+    process.env.VINKIUS_API_BASE = 'http://api.example.com';
+    try {
+      const { vinkius } = makeVinkius([route]);
+      await vinkius.users.get('someuser');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('insecure'));
+    } finally {
+      if (prev === undefined) delete process.env.VINKIUS_API_BASE;
+      else process.env.VINKIUS_API_BASE = prev;
+    }
   });
 });
 
@@ -198,13 +212,13 @@ describe('resource clients (update/delete/get/credentials)', () => {
     await expect(vinkius.user('customer-123').get()).resolves.toMatchObject({ id: 'u1' });
   });
 
-  it('normalizes marketplace search results, including fallback fields', async () => {
+  it('normalizes marketplace search into a paged CatalogSearchResult', async () => {
     const { vinkius } = makeVinkius([
       {
         method: 'GET',
         path: /^\/marketplace\/search$/,
         respond: (c) => {
-          if (c.query.get('q') === 'none') return { body: { results: [] } };
+          if (c.query.get('q') === 'none') return { body: { results: [], has_more: false, page: 1 } };
           return {
             body: {
               results: [
@@ -214,18 +228,21 @@ describe('resource clients (update/delete/get/credentials)', () => {
                   title: 'Slack',
                   short_description: null,
                   publisher_type: 'first_party',
+                  listing_type: 'mcp',
                   server_type: 'mcp',
                   requires_auth: true,
                 },
               ],
+              has_more: false,
+              page: 1,
             },
           };
         },
       },
     ]);
-    expect(await vinkius.catalog.search('none')).toEqual([]);
+    expect(await vinkius.catalog.search('none')).toEqual({ items: [], hasMore: false, page: 1 });
     const found = await vinkius.catalog.search('slack');
-    expect(found[0]).toMatchObject({ listing_type: 'mcp', requires_buyer_auth: true });
+    expect(found.items[0]).toMatchObject({ listing_type: 'mcp', requires_buyer_auth: true });
   });
 });
 

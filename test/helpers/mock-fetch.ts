@@ -97,15 +97,26 @@ export function makeVinkius(
   overrides: Partial<VinkiusOptions> = {},
 ): { vinkius: Vinkius; calls: RecordedCall[] } {
   const { fetch, calls } = createMockFetch(routes);
-  const vinkius = new Vinkius({
-    appId: 'vk_app_test',
-    apiKey: 'vk_app_sk_test',
-    baseUrl: 'http://localhost:8080',
-    maxRetries: 0,
-    fetch,
-    ...overrides,
-  });
-  return { vinkius, calls };
+
+  // The Vinkius client resolves its endpoint from the VINKIUS_API_BASE env var;
+  // point it at a local host so the mock's full-URL assertions hold.
+  const base = process.env.VINKIUS_API_BASE ?? 'http://localhost:8080';
+  const previous = process.env.VINKIUS_API_BASE;
+  process.env.VINKIUS_API_BASE = base;
+
+  try {
+    const vinkius = new Vinkius({
+      appId: 'vk_app_test',
+      apiKey: 'vk_app_sk_test',
+      maxRetries: 0,
+      fetch,
+      ...overrides,
+    });
+    return { vinkius, calls };
+  } finally {
+    if (previous === undefined) delete process.env.VINKIUS_API_BASE;
+    else process.env.VINKIUS_API_BASE = previous;
+  }
 }
 
 // ── Fixtures ────────────────────────────────────────────────────────────────

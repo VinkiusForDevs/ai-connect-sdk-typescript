@@ -13,6 +13,7 @@ export { Vinkius } from './fluent/vinkius';
 export { UserContext } from './fluent/user';
 export { Connector } from './fluent/connector';
 export { CredentialsHandle } from './fluent/credentials';
+export type { SetCredentialsOptions } from './fluent/credentials';
 export { Capability, CapabilitySet } from './fluent/capability';
 export type { CapabilityExecutor } from './fluent/capability';
 

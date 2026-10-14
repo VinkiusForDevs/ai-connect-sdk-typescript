@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-10-14
+
+### Added
+
+- **Credential merge** — `CredentialsClient.set(values, { merge: true })` (and the
+  fluent equivalent) now merge the submitted values into the stored credential set
+  instead of replacing it, so keys the caller omits are preserved on the server.
+- **Paged catalog search** — `CatalogClient.search()` and the fluent catalog path
+  now return a `CatalogSearchResult` (`items`, `hasMore`, `page`) sourced from the
+  real `/marketplace/search` projection, including each connector's `listing_type`.
+- **Typed gate errors** — Vinkius-gate blocks received from the runtime (plan
+  quota, overage-blocked payment, tripped circuit breaker) now throw `QuotaError`,
+  `OverageError` (both carry `upgradeUrl`), or `RateLimitError` instead of a
+  natural-language error result, so callers can react programmatically.
+
+### Fixed
+
+- `search()` no longer fabricates a missing `listing_type`; a listing without the
+  field, or a search body without a `results` array, now raises `ProtocolError`.
+- Retry: a request the caller hard-flagged `idempotent: false` (e.g.
+  `tokens.issue`) is never auto-retried, even when an `Idempotency-Key` is present;
+  empty or whitespace-only keys are rejected with `ConfigError`.
+
+### Changed
+
+- **Fixed API endpoint** — `baseUrl` is no longer a public `VinkiusOptions` field.
+  The Vinkius Cloud endpoint is immutable in application code; a local/staging
+  override is available only via the `VINKIUS_API_BASE` environment variable.
+
 ## [0.2.0] — 2026-09-14
 
 ### Added
@@ -91,6 +120,7 @@ First public release of `@vinkius/connect`.
   operations (users, connectors, credentials, catalog) work against the current
   API.
 
+[0.3.0]: https://github.com/VinkiusForDevs/ai-connect-sdk-typescript/releases/tag/v0.3.0
 [0.1.3]: https://github.com/vinkius-labs/ai-connect-sdk/releases/tag/v0.1.3
 [0.1.2]: https://github.com/vinkius-labs/ai-connect-sdk/releases/tag/v0.1.2
 [0.1.0]: https://github.com/vinkius-labs/ai-connect-sdk/releases/tag/v0.1.0

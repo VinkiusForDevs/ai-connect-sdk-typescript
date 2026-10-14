@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, ConnectionError, NotFoundError, Vinkius } from '../src';
+import { ConfigError, ConnectionError, NotFoundError, Vinkius, ConnectionTokensClient } from '../src';
 import { runOpenAIToolCall } from '../src/adapters/openai';
-import { makeVinkius, type Route } from './helpers/mock-fetch';
+import { HttpClient } from '../src/core/http';
+import { createMockFetch, makeVinkius, type Route } from './helpers/mock-fetch';
 
 describe('config validation', () => {
   it('rejects a non-public appId', () => {
@@ -105,7 +106,7 @@ describe('HttpClient behavior', () => {
     await expect(promise).rejects.toBeInstanceOf(ConnectionError);
   });
 
-  it('retries a POST carrying an idempotency key (the key makes it retry-safe)', async () => {
+  it('retries an idempotent create carrying an idempotency key (key is forwarded for correlation)', async () => {
     let attempts = 0;
     const route: Route = {
       method: 'POST',
@@ -121,6 +122,55 @@ describe('HttpClient behavior', () => {
     expect(result.id).toBe('x');
     expect(attempts).toBe(2);
     expect(calls.every((c) => c.headers.get('idempotency-key') === 'key-123')).toBe(true);
+  });
+});
+
+describe('Idempotency-Key safety', () => {
+  it('rejects an empty idempotency key (ConfigError)', async () => {
+    const { vinkius } = makeVinkius([
+      { method: 'GET', path: /^\/apps\/vk_app_test\/users\/someuser$/, respond: () => ({ body: { data: { id: 'x' } } }) },
+    ]);
+    await expect(vinkius.users.get('someuser', { idempotencyKey: '' })).rejects.toBeInstanceOf(ConfigError);
+  });
+
+  it('rejects a whitespace-only idempotency key (ConfigError)', async () => {
+    const { vinkius } = makeVinkius([
+      { method: 'GET', path: /^\/apps\/vk_app_test\/users\/someuser$/, respond: () => ({ body: { data: { id: 'x' } } }) },
+    ]);
+    await expect(vinkius.users.get('someuser', { idempotencyKey: '   ' })).rejects.toBeInstanceOf(ConfigError);
+  });
+
+  it('never auto-retries a non-idempotent token issue, even when a key is supplied', async () => {
+    let attempts = 0;
+    const routes: Route[] = [
+      {
+        method: 'POST',
+        path: /^\/apps\/vk_app_test\/users\/customer-123\/mcps\/conn_1\/tokens$/,
+        respond: () => {
+          attempts += 1;
+          // Transient 503 would be retried for an idempotent request.
+          return { status: 503, body: { message: 'unavailable' } };
+        },
+      },
+    ];
+    const { fetch, calls } = createMockFetch(routes);
+    const http = new HttpClient({
+      baseUrl: 'http://localhost:8080',
+      apiKey: 'vk_app_sk_test',
+      appId: 'vk_app_test',
+      timeoutMs: 5000,
+      retry: { maxRetries: 3, baseDelayMs: 1, maxDelayMs: 2 },
+      fetch,
+      userAgent: 'test',
+    });
+    const tokens = new ConnectionTokensClient(http, 'vk_app_test', 'customer-123', 'conn_1');
+
+    // `tokens.issue` is `idempotent: false`: supplying a key must NOT arm a
+    // transport retry that would mint a duplicate token.
+    const p = tokens.issue({}, { idempotencyKey: 'tok-key' });
+    await expect(p).rejects.toMatchObject({ code: 'api_error' });
+    expect(attempts).toBe(1);
+    expect(calls[0].headers.get('idempotency-key')).toBe('tok-key');
   });
 });
 

@@ -2,7 +2,7 @@
  * Connection credentials (low-level, 1:1 with the API).
  *
  *   GET /apps/{app}/users/{externalId}/mcps/{connection}/credentials  → CredentialStatus
- *   PUT  (same)  body { credentials: { KEY: value } }                 → CredentialStatus
+ *   PUT  (same)  body { credentials: { KEY: value }, merge? }         → CredentialStatus
  *
  * Values are write-only: the API never returns them, only which keys are set.
  * NOTE the low-level `set` takes the raw HTTP envelope `{ credentials: {...} }`;
@@ -14,6 +14,8 @@ import type { CredentialStatus, RequestOptions } from '../types';
 
 export interface SetCredentialsInput {
   credentials: Record<string, string>;
+  /** Merge into the stored credentials instead of replacing them. */
+  merge?: boolean;
 }
 
 export class CredentialsClient {
@@ -43,7 +45,7 @@ export class CredentialsClient {
     });
   }
 
-  /** Store credentials, validated server-side against the connector schema. */
+  /** Store credentials, validated server-side. `merge` updates only the sent keys. */
   set(input: SetCredentialsInput, opts: RequestOptions = {}): Promise<CredentialStatus> {
     return this.http.put<CredentialStatus>(this.base(), input, {
       signal: opts.signal,

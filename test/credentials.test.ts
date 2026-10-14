@@ -55,4 +55,23 @@ describe('CredentialsHandle', () => {
     const put = calls.find((c) => c.method === 'PUT');
     expect(put?.body).toEqual({ credentials: { GITHUB_TOKEN: 'ghp_x' } });
   });
+
+  it('sends merge: true in the body so the server preserves unsent credentials', async () => {
+    const { vinkius, calls } = makeVinkius([
+      listRoute,
+      {
+        method: 'PUT',
+        path: /^\/apps\/vk_app_test\/users\/customer-123\/mcps\/conn_1\/credentials$/,
+        respond: () => ({
+          body: { schema: { GITHUB_TOKEN: { type: 'api_key' } }, configured: { GITHUB_TOKEN: true } },
+        }),
+      },
+    ]);
+    await vinkius
+      .user('customer-123')
+      .connector('github')
+      .credentials.set({ GITHUB_TOKEN: 'ghp_new' }, { merge: true });
+    const put = calls.find((c) => c.method === 'PUT');
+    expect(put?.body).toEqual({ credentials: { GITHUB_TOKEN: 'ghp_new' }, merge: true });
+  });
 });

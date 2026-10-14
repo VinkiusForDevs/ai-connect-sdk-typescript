@@ -46,7 +46,7 @@ export class Vinkius {
       throw new ConfigError('No global fetch found. Pass `fetch` in options or use Node >= 18.');
     }
 
-    const baseUrl = normalizeBaseUrl(options.baseUrl ?? DEFAULT_BASE_URL);
+    const baseUrl = normalizeBaseUrl(resolveBaseUrl());
     warnIfInsecure(baseUrl);
 
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -94,6 +94,16 @@ export class Vinkius {
     }
     return new UserContext(this.ctx, externalId);
   }
+}
+
+function resolveBaseUrl(): string {
+  // The Vinkius Cloud endpoint is fixed; only a sandbox/staging override comes
+  // from the VINKIUS_API_BASE environment variable, never from user code.
+  const override =
+    typeof process !== 'undefined' && typeof process.env?.VINKIUS_API_BASE === 'string'
+      ? process.env.VINKIUS_API_BASE
+      : '';
+  return override.trim() !== '' ? override : DEFAULT_BASE_URL;
 }
 
 function normalizeBaseUrl(url: string): string {

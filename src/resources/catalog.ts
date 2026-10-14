@@ -3,50 +3,80 @@
  *
  *   GET /catalog/mcps                    → paginated CatalogConnector
  *   GET /catalog/mcps/{slug}             → CatalogConnectorDetail (+ credential_schema)
- *   GET /marketplace/search?q=...&page=1 → marketplace-ranked search results
- *
- * Catalog listing/detail use the internal MCP data-plane routes. Search uses
- * the public marketplace endpoint so SDK consumers receive the same ranking
- * and results as the Vinkius website.
+ *   GET /marketplace/search?q=...&page=1 → CatalogSearchResult (items + hasMore + page)
  */
 import type { HttpClient } from '../core/http';
+import { ProtocolError } from '../core/errors';
 import { normalizePaginated, pageIterator, unwrapItem } from '../core/pagination';
-import type { CatalogConnector, CatalogConnectorDetail, Paginated, RequestOptions } from '../types';
+import type {
+  CatalogConnector,
+  CatalogConnectorDetail,
+  CatalogSearchResult,
+  Paginated,
+  RequestOptions,
+} from '../types';
 
-interface MarketplaceSearchConnector {
-  id: string;
-  slug: string;
-  title: string;
-  short_description: string | null;
-  publisher_type: string;
-  listing_type?: string;
-  server_type?: string;
-  tools_count?: number;
-  requires_buyer_auth?: boolean;
-  requires_auth?: boolean;
+interface MarketplaceSearchBody {
+  results?: unknown;
+  has_more?: unknown;
+  page?: unknown;
 }
 
-interface MarketplaceSearchResponse {
-  results?: MarketplaceSearchConnector[];
-  has_more?: boolean;
-  page?: number;
+/** Map one marketplace/search result item to a {@link CatalogConnector}; malformed items throw. */
+function toSearchConnector(item: unknown, index: number): CatalogConnector {
+  const it = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+
+  if (typeof it.id !== 'string' || it.id.trim() === '') {
+    throw new ProtocolError(`Malformed marketplace search item at index ${index}: missing id.`, {
+      details: item,
+    });
+  }
+  if (typeof it.slug !== 'string' || it.slug.trim() === '') {
+    throw new ProtocolError(`Malformed marketplace search item at index ${index}: missing slug.`, {
+      details: item,
+    });
+  }
+  if (typeof it.title !== 'string') {
+    throw new ProtocolError(`Malformed marketplace search item at index ${index}: missing title.`, {
+      details: item,
+    });
+  }
+  if (typeof it.listing_type !== 'string') {
+    throw new ProtocolError(`Malformed marketplace search item at index ${index}: missing listing_type.`, {
+      details: item,
+    });
+  }
+
+  const connector: CatalogConnector = {
+    id: it.id,
+    slug: it.slug,
+    title: it.title,
+    short_description: typeof it.short_description === 'string' ? (it.short_description as string) : null,
+    publisher_type: typeof it.publisher_type === 'string' ? (it.publisher_type as string) : 'community',
+    listing_type: it.listing_type,
+    // wire key is `requires_auth`
+    requires_buyer_auth: it.requires_buyer_auth === true || it.requires_auth === true,
+  };
+  if (typeof it.server_type === 'string') connector.server_type = it.server_type;
+  if (typeof it.tools_count === 'number') connector.tools_count = it.tools_count;
+  return connector;
 }
 
-function normalizeMarketplaceSearch(body: unknown): CatalogConnector[] {
-  const response = body as MarketplaceSearchResponse;
-  if (!Array.isArray(response?.results)) return [];
+/** Normalize a marketplace/search body; a missing `results` array throws a {@link ProtocolError}. */
+export function normalizeMarketplaceSearch(body: unknown): CatalogSearchResult {
+  const response = body as MarketplaceSearchBody;
+  if (!response || typeof response !== 'object' || !Array.isArray(response.results)) {
+    throw new ProtocolError('Malformed marketplace search response: missing results array.', {
+      details: body,
+    });
+  }
 
-  return response.results.map((connector) => ({
-    id: connector.id,
-    slug: connector.slug,
-    title: connector.title,
-    short_description: connector.short_description,
-    publisher_type: connector.publisher_type,
-    listing_type: connector.listing_type ?? connector.server_type ?? '',
-    requires_buyer_auth: connector.requires_buyer_auth ?? connector.requires_auth ?? false,
-    server_type: connector.server_type,
-    tools_count: connector.tools_count,
-  }));
+  const items = response.results.map((item, index) => toSearchConnector(item, index));
+  return {
+    items,
+    hasMore: response.has_more === true,
+    page: typeof response.page === 'number' ? response.page : 1,
+  };
 }
 
 export class CatalogClient {
@@ -84,8 +114,11 @@ export class CatalogClient {
     return unwrapItem<CatalogConnectorDetail>(body);
   }
 
-  /** Search using the same endpoint and ranking as the Vinkius marketplace. */
-  async search(query: string, opts: { page?: number } & RequestOptions = {}): Promise<CatalogConnector[]> {
+  /** Search the marketplace; returns a paged {@link CatalogSearchResult}. */
+  async search(
+    query: string,
+    opts: { page?: number } & RequestOptions = {},
+  ): Promise<CatalogSearchResult> {
     const body = await this.http.get<unknown>('/marketplace/search', {
       query: { q: query, page: opts.page ?? 1 },
       signal: opts.signal,

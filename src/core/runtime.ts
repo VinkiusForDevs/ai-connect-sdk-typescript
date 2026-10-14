@@ -13,10 +13,23 @@
  *    when the caller supplies an idempotency key (side-effect safety).
  *  - Runtime error mapping: revoked token (403) → AuthError, unknown (404) →
  *    NotFoundError, transient (5xx) → ConnectionError, JSON-RPC errors →
- *    ProtocolError. Tool-level failures are returned as `{ isError: true }`.
+ *    ProtocolError.
+ *  - Vinkius-gate blocks (plan quota, overage-blocked payment, tripped circuit
+ *    breaker) carry a `vinkius_block` structured sentinel and surface as the
+ *    typed QuotaError / OverageError / RateLimitError; ordinary upstream
+ *    tool-level failures are still returned as `{ isError: true }`.
  *  - Redacted observability hooks (the `vk_live_*` path segment is masked).
  */
-import { AuthError, NotFoundError, ProtocolError, VinkiusError } from './errors';
+import {
+  AuthError,
+  ConfigError,
+  NotFoundError,
+  OverageError,
+  ProtocolError,
+  QuotaError,
+  RateLimitError,
+  VinkiusError,
+} from './errors';
 import type { RetryPolicy } from './retry';
 import { Transport, type FetchLike } from './transport';
 import type { CapabilityData, CapabilityResult, Hooks } from '../types';
@@ -34,7 +47,11 @@ export interface RuntimeClientConfig {
 
 interface RuntimeCallOptions {
   signal?: AbortSignal | undefined;
-  /** When set, retries the (otherwise non-idempotent) call safely. */
+  /**
+   * Non-empty key that opts this (otherwise non-retryable) `tools/call` into
+   * retry safety, forwarded as the `Idempotency-Key` header. Empty or
+   * whitespace-only keys are rejected (ConfigError).
+   */
   idempotencyKey?: string | undefined;
   /** Per-call deadline in ms, overriding the client-level `timeoutMs`. */
   timeoutMs?: number | undefined;
@@ -81,6 +98,9 @@ export class RuntimeClient {
     args: Record<string, unknown> | undefined,
     opts: RuntimeCallOptions = {},
   ): Promise<CapabilityResult> {
+    if (opts.idempotencyKey !== undefined && opts.idempotencyKey.trim() === '') {
+      throw new ConfigError('Idempotency-Key must be a non-empty, non-whitespace string.');
+    }
     const result = await this.rpc(
       'tools/call',
       { name, arguments: args ?? {} },
@@ -179,6 +199,23 @@ function normalizeCallResult(result: unknown): CapabilityResult {
   // The MCP data plane may return a parsed object alongside the textual content.
   // Surface it verbatim when present — never parsed or transformed by the SDK.
   if ('structuredContent' in r) normalized.structuredContent = r['structuredContent'];
+
+  // Vinkius-gate blocks (plan quota, overage-blocked payment, tripped circuit
+  // breaker) carry a machine-readable `vinkius_block` sentinel in
+  // `structuredContent`. Map those to the typed errors so a caller can react
+  // (e.g. surface the upgrade URL) instead of parsing the natural-language wall
+  // text. A read-only preview block (`vinkius_block: 'preview'`) and any
+  // ordinary upstream tool failure stay in-band as `{ isError: true }`.
+  if (normalized.isError && normalized.structuredContent && typeof normalized.structuredContent === 'object') {
+    const sentinel = normalized.structuredContent as Record<string, unknown>;
+    const kind = sentinel['vinkius_block'];
+    const upgradeUrl = typeof sentinel['upgrade_url'] === 'string' ? sentinel['upgrade_url'] : undefined;
+    const text = content[0]?.text ?? 'Request blocked by the Vinkius runtime.';
+    if (kind === 'quota') throw new QuotaError(text, { details: sentinel, upgradeUrl });
+    if (kind === 'overage') throw new OverageError(text, { details: sentinel, upgradeUrl });
+    if (kind === 'circuit_breaker') throw new RateLimitError(text, { details: sentinel });
+  }
+
   return normalized;
 }
 

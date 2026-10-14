@@ -56,7 +56,16 @@ export class Capability {
     this.inputSchema = init.inputSchema;
   }
 
-  /** Execute this capability at the runtime. `isError: true` results are returned, not thrown. */
+  /**
+   * Execute this capability at the runtime.
+   *
+   * An upstream tool failure is returned as `{ isError: true }` (never thrown).
+   * A Vinkius-gate block, however, throws a typed error the moment the runtime
+   * stops the call before execution: plan quota → {@link QuotaError}, a
+   * declined overage payment → {@link OverageError}, a tripped circuit
+   * breaker → {@link RateLimitError}. Each carries `upgradeUrl`/`retryAfterMs`
+   * where the runtime advertised one.
+   */
   execute(args?: Record<string, unknown>, opts?: ExecuteOptions): Promise<CapabilityResult> {
     return this.executor(this.rawName, args, opts);
   }
